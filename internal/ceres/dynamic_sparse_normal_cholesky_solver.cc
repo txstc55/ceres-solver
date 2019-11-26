@@ -45,6 +45,7 @@
 #include "ceres/triplet_sparse_matrix.h"
 #include "ceres/types.h"
 #include "ceres/wall_time.h"
+#include <iostream>
 
 #ifdef CERES_USE_EIGEN_SPARSE
 #include "Eigen/SparseCholesky"
@@ -83,10 +84,10 @@ LinearSolver::Summary DynamicSparseNormalCholeskySolver::SolveImpl(
   LinearSolver::Summary summary;
   switch (options_.sparse_linear_algebra_library_type) {
     case SUITE_SPARSE:
-      summary = SolveImplUsingSuiteSparse(A, x);
+      summary = SolveImplUsingEigen(A, x);
       break;
     case CX_SPARSE:
-      summary = SolveImplUsingCXSparse(A, x);
+      summary = SolveImplUsingEigen(A, x);
       break;
     case EIGEN_SPARSE:
       summary = SolveImplUsingEigen(A, x);
@@ -129,10 +130,10 @@ LinearSolver::Summary DynamicSparseNormalCholeskySolver::SolveImplUsingEigen(
                                                        A->mutable_rows(),
                                                        A->mutable_cols(),
                                                        A->mutable_values());
-
+  
   Eigen::SparseMatrix<double> lhs = a.transpose() * a;
   Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
-
+  std::cout<<"A params: "<<A->num_rows()<<" "<<A->num_cols()<<" "<<A->num_nonzeros()<<"\n";
   LinearSolver::Summary summary;
   summary.num_iterations = 1;
   summary.termination_type = LINEAR_SOLVER_SUCCESS;

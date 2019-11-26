@@ -52,7 +52,7 @@
 #include "ceres/stringprintf.h"
 #include "ceres/types.h"
 #include "ceres/wall_time.h"
-
+#include <iostream>
 namespace ceres {
 namespace {
 
@@ -494,7 +494,7 @@ void Solver::Solve(const Solver::Options& options,
   ProblemImpl* problem_impl = problem->impl_.get();
   Program* program = problem_impl->mutable_program();
   PreSolveSummarize(options, problem_impl, summary);
-
+  std::cout<<"Linear solver type given: "<<LinearSolverTypeToString(options.linear_solver_type)<<"\n";
   // If gradient_checking is enabled, wrap all cost functions in a
   // gradient checker and install a callback that terminates if any gradient
   // error is detected.

@@ -37,15 +37,16 @@
 #include "ceres/float_suitesparse.h"
 #include "ceres/iterative_refiner.h"
 #include "ceres/suitesparse.h"
-
+#include <iostream>
 namespace ceres {
 namespace internal {
 
 std::unique_ptr<SparseCholesky> SparseCholesky::Create(
+  
     const LinearSolver::Options& options) {
   const OrderingType ordering_type = options.use_postordering ? AMD : NATURAL;
   std::unique_ptr<SparseCholesky> sparse_cholesky;
-
+std::cout<<"inside sparse cholesky\n";
   switch (options.sparse_linear_algebra_library_type) {
     case SUITE_SPARSE:
 #ifndef CERES_NO_SUITESPARSE
