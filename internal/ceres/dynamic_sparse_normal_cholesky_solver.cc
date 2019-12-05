@@ -46,6 +46,9 @@
 #include "ceres/types.h"
 #include "ceres/wall_time.h"
 #include <iostream>
+#include <fstream>
+#include <string>
+
 
 #ifdef CERES_USE_EIGEN_SPARSE
 #include "Eigen/SparseCholesky"
@@ -53,6 +56,18 @@
 
 namespace ceres {
 namespace internal {
+std::vector<int> DynamicSparseNormalCholeskySolver::ata_outer_index;
+std::vector<int> DynamicSparseNormalCholeskySolver::ata_inner_index;
+std::vector<size_t> DynamicSparseNormalCholeskySolver::scramble_data_id;
+std::vector<size_t> DynamicSparseNormalCholeskySolver::scramble_result_position;
+int DynamicSparseNormalCholeskySolver::ata_non_zero = 0;
+int DynamicSparseNormalCholeskySolver::ata_rows = 0;
+int DynamicSparseNormalCholeskySolver::ata_cols = 0;
+
+void (*DynamicSparseNormalCholeskySolver::Execute_single)(const std::vector<size_t>&, const std::vector<size_t>&, const std::vector<std::vector<double>>&, std::vector<double>&);
+void (*DynamicSparseNormalCholeskySolver::Execute_multi)(const std::vector<size_t>&, const std::vector<size_t>&, const std::vector<std::vector<double>>&, std::vector<double>&);
+
+Eigen::SparseMatrix<double, Eigen::RowMajor> DynamicSparseNormalCholeskySolver::lhs_structure;
 
 DynamicSparseNormalCholeskySolver::DynamicSparseNormalCholeskySolver(
     const LinearSolver::Options& options)
@@ -63,6 +78,69 @@ LinearSolver::Summary DynamicSparseNormalCholeskySolver::SolveImpl(
     const double* b,
     const LinearSolver::PerSolveOptions& per_solve_options,
     double* x) {
+
+  // if our method is not initialized, initialize it here
+  if (ata_non_zero==0){
+    // load the file
+    int outer_size, inner_size;
+    std::ifstream file("../ata_specs.txt");
+    file>>ata_rows>>ata_cols>>ata_non_zero>>outer_size>>inner_size;
+    ata_outer_index.reserve(outer_size);
+    ata_inner_index.reserve(inner_size);
+    for (unsigned int i=0; i<outer_size; i++){
+      int tmp;
+      file>>tmp;
+      ata_outer_index.push_back(tmp);
+    }
+    for (unsigned int i=0; i<inner_size; i++){
+      int tmp;
+      file>>tmp;
+      ata_inner_index.push_back(tmp);
+    }
+    file.close();
+    std::cout<<"File read first time, specs: "<<ata_rows<<" "<<ata_cols<<" "<<ata_non_zero<<", reading functions now\n";
+
+
+    std::string lib = "../scramble_grouped.so";
+    void* handle = dlopen(lib.c_str(), RTLD_NOW);
+    if (handle == NULL) {
+        fprintf(stderr, "dlopen failed: %s\n", dlerror());
+        exit(EXIT_FAILURE);
+    } else {
+        *(void**)(&Execute_single) = dlsym(handle, "scramble_grouped_single");
+        if (Execute_single == NULL) {
+            fprintf(stderr, "dlsym for single function failure: %s\n", dlerror());
+        }
+        *(void**)(&Execute_multi) = dlsym(handle, "scramble_grouped_multi");
+        if (Execute_multi == NULL) {
+            fprintf(stderr, "dlsym for multi function failure: %s\n", dlerror());
+        }
+    }
+    std::cout<<"Function linking complete, reading scramble index now\n";
+
+    int id_size, result_position_size;
+    std::ifstream scramble_index_file("../scramble_index.txt");
+    scramble_index_file>>id_size>>result_position_size;
+    scramble_data_id.reserve(id_size);
+    scramble_result_position.reserve(result_position_size);
+    for (unsigned int i=0; i<id_size; i++){
+      size_t tmp;
+      scramble_index_file>>tmp;
+      scramble_data_id.push_back(tmp);
+    }
+    for (unsigned int i=0; i<result_position_size; i++){
+      size_t tmp;
+      scramble_index_file>>tmp;
+      scramble_result_position.push_back(tmp);
+    }
+    std::cout<<"Scramble index finished reading: "<<id_size<<" "<<result_position_size<<", making tmp matrix now for holding matrix structure\n";
+    std::vector<double> tmp_data;
+    tmp_data.resize(ata_non_zero);
+    Eigen::MappedSparseMatrix<double, Eigen::RowMajor> lhs_structure_map(ata_rows, ata_cols, ata_non_zero, ata_outer_index.data(), ata_inner_index.data(), tmp_data.data());
+    lhs_structure = Eigen::SparseMatrix<double, Eigen::RowMajor>(lhs_structure_map);
+    std::cout<<"Done initializing for the first time\n";
+  }
+  
   const int num_cols = A->num_cols();
   VectorRef(x, num_cols).setZero();
   A->LeftMultiply(b, x);
@@ -124,14 +202,24 @@ LinearSolver::Summary DynamicSparseNormalCholeskySolver::SolveImplUsingEigen(
 
   EventLogger event_logger("DynamicSparseNormalCholeskySolver::Eigen::Solve");
 
-  Eigen::MappedSparseMatrix<double, Eigen::RowMajor> a(A->num_rows(),
-                                                       A->num_cols(),
-                                                       A->num_nonzeros(),
-                                                       A->mutable_rows(),
-                                                       A->mutable_cols(),
-                                                       A->mutable_values());
-  
-  Eigen::SparseMatrix<double> lhs = a.transpose() * a;
+  // Eigen::MappedSparseMatrix<double, Eigen::RowMajor> a(A->num_rows(),
+  //                                                      A->num_cols(),
+  //                                                      A->num_nonzeros(),
+  //                                                      A->mutable_rows(),
+  //                                                      A->mutable_cols(),
+  //                                                      A->mutable_values());
+  std::vector<double> a_data(A->mutable_values(), A->mutable_values()+A->num_nonzeros());
+  std::vector<std::vector<double>> data;
+  data.push_back(a_data);
+  std::vector<double> result;
+  result.resize(ata_non_zero);
+  Execute_multi(scramble_data_id, scramble_result_position, data, result);
+  Eigen::SparseMatrix<double, Eigen::RowMajor> lhs = lhs_structure;
+  for (unsigned int i=0; i<ata_non_zero; i++){
+    lhs.valuePtr()[i] = result[i];
+  }
+  // Eigen::SparseMatrix<double, Eigen::RowMajor> lhs = Eigen::SparseMatrix<double, Eigen::RowMajor>(lhs_m);
+  // Eigen::SparseMatrix<double> lhs = a.transpose() * a;
   Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
   std::cout<<"A params: "<<A->num_rows()<<" "<<A->num_cols()<<" "<<A->num_nonzeros()<<"\n";
   LinearSolver::Summary summary;

@@ -39,6 +39,10 @@
 
 #include "ceres/linear_solver.h"
 
+#include <dlfcn.h>
+#include <unistd.h>
+#include <vector>
+#include "Eigen/SparseCore"
 namespace ceres {
 namespace internal {
 
@@ -57,6 +61,18 @@ class DynamicSparseNormalCholeskySolver
   explicit DynamicSparseNormalCholeskySolver(
       const LinearSolver::Options& options);
   virtual ~DynamicSparseNormalCholeskySolver() {}
+  static std::vector<int> ata_outer_index;
+  static std::vector<int> ata_inner_index;
+  static std::vector<size_t> scramble_data_id;
+  static std::vector<size_t> scramble_result_position;
+  static int ata_non_zero;
+  static int ata_rows;
+  static int ata_cols;
+
+  static void (*Execute_single)(const std::vector<size_t>&, const std::vector<size_t>&, const std::vector<std::vector<double>>&, std::vector<double>&);
+  static void (*Execute_multi)(const std::vector<size_t>&, const std::vector<size_t>&, const std::vector<std::vector<double>>&, std::vector<double>&);
+
+  static Eigen::SparseMatrix<double, Eigen::RowMajor> lhs_structure;
 
  private:
   LinearSolver::Summary SolveImpl(
